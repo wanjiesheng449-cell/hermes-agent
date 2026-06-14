@@ -106,6 +106,9 @@ config/mcporter.json
 hermes_cli/tui_dist/*
 hermes_cli/scripts/
 docs/superpowers/*
+!docs/superpowers/
+!docs/superpowers/specs/
+!docs/superpowers/specs/2026-06-14-feishu-temporal-bridge-design.md
 # Working directory for the Hermes Agent's session state (~/.hermes/ at runtime;
 # also created in-repo when an agent operates in this checkout). Plans, audit
 # logs, and per-session caches are never artifacts of the codebase.
