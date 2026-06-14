@@ -107,6 +107,34 @@ Hermes 有两种入口：用 `hermes` 启动终端 UI，或运行网关从 Teleg
 
 ---
 
+## Feishu 长任务持久化桥接
+
+如果你是通过 Feishu/Lark 跑 Hermes，而且希望长任务不要因为 webhook 重试、进程重启或 worker 崩掉而中断，可以开启 Feishu 的 Temporal bridge，而不是让每条消息都在 webhook 进程里同步跑完。
+
+最小配置示例：
+
+```yaml
+platforms:
+  feishu:
+    extra:
+      connection_mode: "webhook"
+      bridge_mode: "temporal"
+      temporal_target_host: "127.0.0.1:7233"
+      temporal_namespace: "default"
+      temporal_task_queue: "feishu-bridge"
+```
+
+运维流程：
+
+1. 启动 Temporal server，或者接入托管的 Temporal 集群。
+2. 以 Feishu webhook 模式启动 Hermes。
+3. 再启动一个 worker 进程，导入 `gateway.platforms.feishu_temporal`，让 `FeishuAgentRunWorkflow` 和 Hermes step activity 挂到同一个 Temporal task queue 上。
+4. 后续正常在 Feishu 里使用即可：像 `干完了吗` 这样的进度查询会直接读 run snapshot，长任务则通过 workflow 持续执行。
+
+这个模式更适合生产里的消息机器人场景，重点是解决重复投递和长任务中断，而不是追求最简单的单进程部署。
+
+---
+
 ## 文档
 
 所有文档位于 **[hermes-agent.nousresearch.com/docs](https://hermes-agent.nousresearch.com/docs/)**：

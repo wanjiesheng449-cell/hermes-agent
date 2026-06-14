@@ -54,6 +54,23 @@ class TestConfigEnvOverrides(unittest.TestCase):
     @patch.dict(os.environ, {
         "FEISHU_APP_ID": "cli_xxx",
         "FEISHU_APP_SECRET": "secret_xxx",
+        "FEISHU_BRIDGE_MODE": "temporal",
+        "TEMPORAL_TARGET_HOST": "127.0.0.1:7233",
+        "TEMPORAL_NAMESPACE": "default",
+    }, clear=False)
+    def test_feishu_bridge_mode_loaded_from_env(self):
+        from gateway.config import GatewayConfig, Platform, _apply_env_overrides
+
+        config = GatewayConfig()
+        _apply_env_overrides(config)
+
+        self.assertEqual(config.platforms[Platform.FEISHU].extra["bridge_mode"], "temporal")
+        self.assertEqual(config.platforms[Platform.FEISHU].extra["temporal_target_host"], "127.0.0.1:7233")
+        self.assertEqual(config.platforms[Platform.FEISHU].extra["temporal_namespace"], "default")
+
+    @patch.dict(os.environ, {
+        "FEISHU_APP_ID": "cli_xxx",
+        "FEISHU_APP_SECRET": "secret_xxx",
         "FEISHU_HOME_CHANNEL": "oc_xxx",
     }, clear=False)
     def test_feishu_home_channel_loaded(self):

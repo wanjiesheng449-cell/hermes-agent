@@ -719,6 +719,13 @@ platform_toolsets:
 #     # allowed_chats: ["-1001234567890"]
 #     extra:
 #       disable_link_previews: false  # Set true to suppress Telegram URL previews in bot messages
+#   feishu:
+#     extra:
+#       connection_mode: "webhook"          # or "websocket"
+#       bridge_mode: "temporal"             # route long tasks through Temporal
+#       temporal_target_host: "127.0.0.1:7233"
+#       temporal_namespace: "default"
+#       temporal_task_queue: "feishu-bridge"
 #
 # Discord-specific settings (config.yaml top-level, not under platforms:):
 #

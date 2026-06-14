@@ -123,6 +123,34 @@ For the full command lists, see the [CLI guide](https://hermes-agent.nousresearc
 
 ---
 
+## Feishu Durable Bridge
+
+If you run Hermes through Feishu/Lark and want long-running tasks to survive process restarts, webhook retries, or worker crashes, enable the Feishu Temporal bridge instead of running every task inline in the webhook process.
+
+Minimum setup:
+
+```yaml
+platforms:
+  feishu:
+    extra:
+      connection_mode: "webhook"
+      bridge_mode: "temporal"
+      temporal_target_host: "127.0.0.1:7233"
+      temporal_namespace: "default"
+      temporal_task_queue: "feishu-bridge"
+```
+
+Operator flow:
+
+1. Run a Temporal server or connect to a managed Temporal cluster.
+2. Start Hermes with Feishu webhook mode enabled.
+3. Start a worker process that imports `gateway.platforms.feishu_temporal` so the `FeishuAgentRunWorkflow` and Hermes step activity are registered on the same Temporal task queue.
+4. Keep using Feishu normally: status queries such as `干完了吗` are served from run snapshots, while long tasks execute through the workflow.
+
+This mode is aimed at production messaging bots where duplicate inbound delivery and interrupted long-running tasks are more important than minimum deployment complexity.
+
+---
+
 ## Documentation
 
 All documentation lives at **[hermes-agent.nousresearch.com/docs](https://hermes-agent.nousresearch.com/docs/)**:

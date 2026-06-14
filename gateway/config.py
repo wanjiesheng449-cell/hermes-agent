@@ -1771,6 +1771,15 @@ def _apply_env_overrides(config: GatewayConfig) -> None:
             "domain": os.getenv("FEISHU_DOMAIN", "feishu"),
             "connection_mode": os.getenv("FEISHU_CONNECTION_MODE", "websocket"),
         })
+        feishu_bridge_mode = os.getenv("FEISHU_BRIDGE_MODE", "").strip().lower()
+        if feishu_bridge_mode:
+            config.platforms[Platform.FEISHU].extra["bridge_mode"] = feishu_bridge_mode
+        temporal_target_host = os.getenv("TEMPORAL_TARGET_HOST", "").strip()
+        if temporal_target_host:
+            config.platforms[Platform.FEISHU].extra["temporal_target_host"] = temporal_target_host
+        temporal_namespace = os.getenv("TEMPORAL_NAMESPACE", "").strip()
+        if temporal_namespace:
+            config.platforms[Platform.FEISHU].extra["temporal_namespace"] = temporal_namespace
         feishu_encrypt_key = os.getenv("FEISHU_ENCRYPT_KEY", "")
         if feishu_encrypt_key:
             config.platforms[Platform.FEISHU].extra["encrypt_key"] = feishu_encrypt_key

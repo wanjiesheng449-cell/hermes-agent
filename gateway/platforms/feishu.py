@@ -2927,6 +2927,65 @@ class FeishuAdapter(BasePlatformAdapter):
         self._chat_locks[chat_id] = lock
         return lock
 
+    def _bridge_mode_enabled(self) -> bool:
+        return str(self.config.extra.get("bridge_mode", "") or os.getenv("FEISHU_BRIDGE_MODE", "")).strip().lower() == "temporal"
+
+    def _build_bridge_router(self):
+        if getattr(self, "_bridge_router", None) is None:
+            from gateway.platforms.feishu_bridge_router import FeishuBridgeRouter
+            from gateway.platforms.feishu_bridge_store import FeishuBridgeStore
+            from gateway.platforms.feishu_temporal_client import FeishuTemporalClient
+
+            state_path = get_hermes_home() / "feishu_bridge_state.json"
+            self._bridge_router = FeishuBridgeRouter(
+                store=FeishuBridgeStore(state_path),
+                temporal_client=FeishuTemporalClient.from_config(self.config),
+            )
+        return self._bridge_router
+
+    def _bridge_event_id(self, event: MessageEvent) -> str:
+        raw_message = getattr(event, "raw_message", None)
+        if isinstance(raw_message, dict):
+            header = raw_message.get("header") or {}
+            return str(raw_message.get("event_id") or header.get("event_id") or "")
+        return str(getattr(raw_message, "event_id", "") or "")
+
+    def _format_bridge_status(self, run_id: str | None) -> str:
+        if not run_id:
+            return "当前没有可查询的运行任务。"
+        run = self._build_bridge_router().store.get_run(run_id)
+        if run is None:
+            return "当前没有可查询的运行任务。"
+        return f"当前状态：{run.status}\n当前阶段：{run.current_step}"
+
+    async def _maybe_handle_bridge_event(self, event: MessageEvent) -> bool:
+        if not self._bridge_mode_enabled():
+            return False
+        if event.message_type is not MessageType.TEXT:
+            return False
+
+        from gateway.session import build_session_key
+
+        route = self._build_bridge_router().route_message(
+            conversation_id=build_session_key(
+                event.source,
+                group_sessions_per_user=self.config.extra.get("group_sessions_per_user", True),
+                thread_sessions_per_user=self.config.extra.get("thread_sessions_per_user", False),
+            ),
+            chat_id=event.source.chat_id,
+            thread_id=event.source.thread_id,
+            message_id=event.message_id or "",
+            event_id=self._bridge_event_id(event),
+            text=event.text or "",
+        )
+        if route.action == "status_reply":
+            metadata = {"thread_id": event.source.thread_id} if event.source.thread_id else None
+            await self.send(event.source.chat_id, self._format_bridge_status(route.run_id), metadata=metadata)
+            return True
+        if route.action in {"cancel_run", "signal_waiting_run", "start_run", "busy_status", "duplicate_ignored"}:
+            return True
+        return False
+
     async def _handle_message_with_guards(self, event: MessageEvent) -> None:
         """Dispatch a single event through the agent pipeline with per-chat serialization
         before handing the event off to the agent.
@@ -2937,6 +2996,8 @@ class FeishuAdapter(BasePlatformAdapter):
         chat_id = getattr(event.source, "chat_id", "") or "" if event.source else ""
         chat_lock = self._get_chat_lock(chat_id)
         async with chat_lock:
+            if await self._maybe_handle_bridge_event(event):
+                return
             await self.handle_message(event)
 
     # =========================================================================
