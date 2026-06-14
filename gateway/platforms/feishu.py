@@ -2956,7 +2956,16 @@ class FeishuAdapter(BasePlatformAdapter):
         run = self._build_bridge_router().store.get_run(run_id)
         if run is None:
             return "当前没有可查询的运行任务。"
-        return f"当前状态：{run.status}\n当前阶段：{run.current_step}"
+        lines = [f"当前状态：{run.status}", f"当前阶段：{run.current_step}"]
+        if getattr(run, "progress_summary", ""):
+            lines.append(f"进度摘要：{run.progress_summary}")
+        if getattr(run, "waiting_reason", ""):
+            lines.append(f"等待原因：{run.waiting_reason}")
+        return "\n".join(lines)
+
+    def _format_bridge_busy_status(self, run_id: str | None) -> str:
+        status = self._format_bridge_status(run_id)
+        return f"{status}\n任务仍在处理中。发送“干完了吗”可以随时查询状态。"
 
     async def _maybe_handle_bridge_event(self, event: MessageEvent) -> bool:
         if not self._bridge_mode_enabled():
@@ -2981,6 +2990,10 @@ class FeishuAdapter(BasePlatformAdapter):
         if route.action == "status_reply":
             metadata = {"thread_id": event.source.thread_id} if event.source.thread_id else None
             await self.send(event.source.chat_id, self._format_bridge_status(route.run_id), metadata=metadata)
+            return True
+        if route.action == "busy_status":
+            metadata = {"thread_id": event.source.thread_id} if event.source.thread_id else None
+            await self.send(event.source.chat_id, self._format_bridge_busy_status(route.run_id), metadata=metadata)
             return True
         if route.action in {"cancel_run", "signal_waiting_run", "start_run", "busy_status", "duplicate_ignored"}:
             return True

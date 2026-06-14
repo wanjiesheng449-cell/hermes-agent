@@ -111,3 +111,35 @@ async def test_bridge_mode_does_not_swallow_existing_command_messages():
     adapter.handle_message.assert_awaited_once()
     adapter.send.assert_not_awaited()
     adapter._bridge_router.route_message.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_bridge_busy_status_sends_visible_reply(tmp_path):
+    from gateway.platforms.feishu import FeishuAdapter
+    from gateway.platforms.feishu_bridge_router import RouteResult
+    from gateway.platforms.feishu_bridge_store import FeishuBridgeStore
+
+    adapter = object.__new__(FeishuAdapter)
+    adapter.config = PlatformConfig(enabled=True)
+    adapter.config.extra = {"bridge_mode": "temporal"}
+    adapter._chat_locks = {}
+    adapter._bridge_router = MagicMock()
+    adapter._bridge_router.route_message.return_value = RouteResult(action="busy_status", run_id="run-1")
+    adapter._bridge_router.store = FeishuBridgeStore(tmp_path / "bridge.json")
+    adapter._bridge_router.store._state["runs"]["run-1"] = {
+        "run_id": "run-1",
+        "conversation_id": "conv-1",
+        "chat_id": "oc_1",
+        "thread_id": "thread_1",
+        "trigger_message_id": "om_1",
+        "status": "running",
+        "current_step": "installing",
+        "progress_summary": "still working",
+    }
+    adapter.send = AsyncMock()
+    adapter.handle_message = AsyncMock()
+
+    await adapter._handle_message_with_guards(_make_event("继续"))
+
+    adapter.send.assert_awaited_once()
+    adapter.handle_message.assert_not_awaited()

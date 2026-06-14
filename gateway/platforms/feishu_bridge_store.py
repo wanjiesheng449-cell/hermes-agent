@@ -4,7 +4,7 @@ import json
 import uuid
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from threading import Lock
+from threading import RLock
 
 from gateway.platforms.feishu_bridge_models import FeishuRunStatus
 from utils import atomic_json_write
@@ -33,14 +33,13 @@ class RunRecord:
 class FeishuBridgeStore:
     def __init__(self, state_path: Path) -> None:
         self._state_path = Path(state_path)
-        self._lock = Lock()
+        self._lock = RLock()
         self._state = {
             "inbound": {},
             "runs": {},
             "replies": {},
         }
-        if self._state_path.exists():
-            self._state = json.loads(self._state_path.read_text(encoding="utf-8"))
+        self._reload_from_disk()
 
     @property
     def state_path(self) -> Path:
@@ -49,6 +48,10 @@ class FeishuBridgeStore:
     def _flush(self) -> None:
         self._state_path.parent.mkdir(parents=True, exist_ok=True)
         atomic_json_write(self._state_path, self._state, indent=2)
+
+    def _reload_from_disk(self) -> None:
+        if self._state_path.exists():
+            self._state = json.loads(self._state_path.read_text(encoding="utf-8"))
 
     def record_inbound(
         self,
@@ -63,6 +66,7 @@ class FeishuBridgeStore:
     ) -> InboundRecordResult:
         dedupe_key = f"{platform}:{tenant_id}:{message_id or event_id}"
         with self._lock:
+            self._reload_from_disk()
             if dedupe_key in self._state["inbound"]:
                 return InboundRecordResult(accepted=False, dedupe_key=dedupe_key)
             self._state["inbound"][dedupe_key] = {
@@ -81,6 +85,7 @@ class FeishuBridgeStore:
         trigger_message_id: str,
     ) -> RunRecord:
         with self._lock:
+            self._reload_from_disk()
             active = self.get_active_run(conversation_id)
             if active is not None:
                 raise RuntimeError(f"active run already exists for {conversation_id}")
@@ -101,19 +106,23 @@ class FeishuBridgeStore:
             return run
 
     def get_active_run(self, conversation_id: str) -> RunRecord | None:
-        for payload in self._state["runs"].values():
-            if payload["conversation_id"] != conversation_id:
-                continue
-            status = FeishuRunStatus(payload["status"])
-            if status.is_active:
-                return RunRecord(**payload)
-        return None
+        with self._lock:
+            self._reload_from_disk()
+            for payload in self._state["runs"].values():
+                if payload["conversation_id"] != conversation_id:
+                    continue
+                status = FeishuRunStatus(payload["status"])
+                if status.is_active:
+                    return RunRecord(**payload)
+            return None
 
     def get_run(self, run_id: str) -> RunRecord | None:
-        payload = self._state["runs"].get(run_id)
-        if payload is None:
-            return None
-        return RunRecord(**payload)
+        with self._lock:
+            self._reload_from_disk()
+            payload = self._state["runs"].get(run_id)
+            if payload is None:
+                return None
+            return RunRecord(**payload)
 
     def update_run(
         self,
@@ -126,6 +135,7 @@ class FeishuBridgeStore:
         checkpoint_version: int | None = None,
     ) -> None:
         with self._lock:
+            self._reload_from_disk()
             payload = self._state["runs"][run_id]
             payload["status"] = status.value
             payload["current_step"] = current_step
@@ -137,6 +147,7 @@ class FeishuBridgeStore:
 
     def mark_reply_sent(self, reply_key: str, content: str) -> bool:
         with self._lock:
+            self._reload_from_disk()
             if reply_key in self._state["replies"]:
                 return False
             self._state["replies"][reply_key] = {"content": content}

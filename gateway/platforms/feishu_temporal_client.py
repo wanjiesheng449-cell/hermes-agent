@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +69,31 @@ class FeishuTemporalClient:
             )
             return None
 
+    def _mark_run_start_failed(self, run_id: str, bridge_metadata: dict | None, reason: str) -> None:
+        state_path = str((bridge_metadata or {}).get("state_path", "") or "")
+        if not state_path:
+            return
+        try:
+            from gateway.platforms.feishu_bridge_models import FeishuRunStatus
+            from gateway.platforms.feishu_bridge_store import FeishuBridgeStore
+
+            store = FeishuBridgeStore(Path(state_path))
+            if store.get_run(run_id) is None:
+                return
+            store.update_run(
+                run_id,
+                status=FeishuRunStatus.FAILED,
+                current_step="temporal_start_failed",
+                progress_summary=reason,
+                waiting_reason="",
+            )
+        except Exception:
+            logger.warning(
+                "[FeishuTemporalClient] Failed to persist start failure for run %s",
+                run_id,
+                exc_info=True,
+            )
+
     async def _start_run(
         self,
         run_id: str,
@@ -81,6 +107,7 @@ class FeishuTemporalClient:
     ) -> None:
         client = await self._ensure_client()
         if client is None:
+            self._mark_run_start_failed(run_id, bridge_metadata, "Temporal client unavailable")
             return
         from gateway.platforms.feishu_temporal import FeishuAgentRunWorkflow, FeishuRunInput
 
@@ -102,6 +129,7 @@ class FeishuTemporalClient:
             )
         except Exception:
             logger.warning("[FeishuTemporalClient] Failed to start workflow %s", workflow_id, exc_info=True)
+            self._mark_run_start_failed(run_id, bridge_metadata, "Failed to start Temporal workflow")
 
     def start_run(
         self,

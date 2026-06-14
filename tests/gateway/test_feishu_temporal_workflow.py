@@ -7,6 +7,7 @@ from gateway.platforms.feishu_temporal import (
     FeishuRunInput,
     HermesStepOutcome,
     HermesStepResult,
+    _default_run_agent_step,
     finalize_run,
     publish_progress,
     reduce_step_result,
@@ -227,3 +228,103 @@ async def test_workflow_cancel_signal_marks_run_cancelled(tmp_path):
 
     assert snapshot["status"] == "cancelled"
     assert store.get_run(run.run_id).status == FeishuRunStatus.CANCELLED.value
+
+
+@pytest.mark.asyncio
+async def test_default_step_returns_checkpoint_when_iteration_budget_exhausted(monkeypatch):
+    class _AgentStub:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.calls = []
+
+        def run_conversation(self, user_message, conversation_history=None):
+            self.calls.append((user_message, conversation_history))
+            return {
+                "final_response": "partial progress",
+                "messages": [{"role": "user", "content": "hi"}],
+                "api_calls": 1,
+                "turn_exit_reason": "max_iterations_reached(1/1)",
+                "completed": True,
+            }
+
+    agent_holder = {}
+
+    def _factory(**kwargs):
+        agent = _AgentStub(**kwargs)
+        agent_holder["agent"] = agent
+        return agent
+
+    monkeypatch.setattr("run_agent.AIAgent", _factory)
+
+    result = await _default_run_agent_step(
+        type(
+            "StepInput",
+            (),
+            {
+                "run_input": FeishuRunInput(
+                    run_id="run-1",
+                    conversation_id="conv-1",
+                    chat_id="oc_1",
+                    thread_id=None,
+                    trigger_message_id="om_1",
+                    normalized_user_text="帮我装好 ComfyUI",
+                ),
+                "checkpoint_payload": {},
+                "checkpoint_version": 0,
+                "user_reply": None,
+            },
+        )()
+    )
+
+    assert agent_holder["agent"].kwargs["max_iterations"] == 1
+    assert result.outcome_type is HermesStepOutcome.CHECKPOINT
+    assert result.checkpoint_payload["conversation_history"] == [{"role": "user", "content": "hi"}]
+    assert result.checkpoint_payload["turn_exit_reason"] == "max_iterations_reached(1/1)"
+
+
+@pytest.mark.asyncio
+async def test_default_step_uses_user_reply_and_prior_history(monkeypatch):
+    class _AgentStub:
+        def __init__(self, **kwargs):
+            self.calls = []
+
+        def run_conversation(self, user_message, conversation_history=None):
+            self.calls.append((user_message, conversation_history))
+            return {
+                "final_response": "done",
+                "messages": [{"role": "assistant", "content": "done"}],
+                "api_calls": 1,
+                "turn_exit_reason": "text_response(finish_reason=stop)",
+                "completed": True,
+            }
+
+    agent = _AgentStub()
+    monkeypatch.setattr("run_agent.AIAgent", lambda **kwargs: agent)
+
+    result = await _default_run_agent_step(
+        type(
+            "StepInput",
+            (),
+            {
+                "run_input": FeishuRunInput(
+                    run_id="run-1",
+                    conversation_id="conv-1",
+                    chat_id="oc_1",
+                    thread_id=None,
+                    trigger_message_id="om_1",
+                    normalized_user_text="帮我装好 ComfyUI",
+                ),
+                "checkpoint_payload": {"conversation_history": [{"role": "assistant", "content": "working"}]},
+                "checkpoint_version": 1,
+                "user_reply": "/Users/xiaofu/Documents/comfy",
+            },
+        )()
+    )
+
+    assert agent.calls == [
+        (
+            "/Users/xiaofu/Documents/comfy",
+            [{"role": "assistant", "content": "working"}],
+        )
+    ]
+    assert result.outcome_type is HermesStepOutcome.COMPLETED

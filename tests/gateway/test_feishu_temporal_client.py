@@ -2,6 +2,8 @@ import asyncio
 
 import pytest
 
+from gateway.platforms.feishu_bridge_models import FeishuRunStatus
+from gateway.platforms.feishu_bridge_store import FeishuBridgeStore
 from gateway.platforms.feishu_temporal_client import FeishuTemporalClient
 
 
@@ -37,3 +39,30 @@ async def test_cancel_run_uses_workflow_signal_not_direct_cancel():
 
     assert handle.signal_calls == [("cancel_run", ())]
     assert handle.cancel_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_start_run_failure_marks_run_failed_in_store(tmp_path):
+    store = FeishuBridgeStore(tmp_path / "bridge.json")
+    run = store.create_run("conv-1", "oc_1", None, "om_1")
+
+    class _FailingClient:
+        async def start_workflow(self, *args, **kwargs):
+            raise RuntimeError("boom")
+
+    client = FeishuTemporalClient(temporal_client=_FailingClient())
+
+    await client._start_run(
+        run.run_id,
+        conversation_id="conv-1",
+        chat_id="oc_1",
+        thread_id=None,
+        trigger_message_id="om_1",
+        text="帮我装好 ComfyUI",
+        bridge_metadata={"state_path": str(store.state_path)},
+    )
+
+    saved = store.get_run(run.run_id)
+    assert saved is not None
+    assert saved.status == FeishuRunStatus.FAILED.value
+    assert saved.current_step == "temporal_start_failed"

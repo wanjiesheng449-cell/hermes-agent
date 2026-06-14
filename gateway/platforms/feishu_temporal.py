@@ -99,20 +99,52 @@ async def _maybe_await(value):
 async def _default_run_agent_step(step_input: HermesStepActivityInput) -> HermesStepResult:
     from run_agent import AIAgent
 
-    prompt_parts = [step_input.run_input.normalized_user_text]
-    if step_input.checkpoint_payload:
-        prompt_parts.append(
-            "Resume from this checkpoint:\n"
-            + json.dumps(step_input.checkpoint_payload, ensure_ascii=False, indent=2)
-        )
+    prior_checkpoint = dict(step_input.checkpoint_payload or {})
+    conversation_history = list(prior_checkpoint.get("conversation_history") or [])
     if step_input.user_reply:
-        prompt_parts.append(f"User follow-up:\n{step_input.user_reply}")
-    prompt = "\n\n".join(part for part in prompt_parts if part)
-    agent = AIAgent(max_iterations=10)
-    response = await asyncio.to_thread(agent.chat, prompt)
+        user_message = step_input.user_reply
+    elif conversation_history:
+        user_message = (
+            "Continue the current task from the existing transcript. "
+            "If more user input is required, ask one concrete question."
+        )
+    else:
+        user_message = step_input.run_input.normalized_user_text
+
+    agent = AIAgent(max_iterations=1)
+    result = await asyncio.to_thread(
+        agent.run_conversation,
+        user_message,
+        conversation_history=conversation_history,
+    )
+
+    response = str(result.get("final_response", "") or "")
     summary = response[:200]
-    checkpoint_payload = dict(step_input.checkpoint_payload or {})
-    checkpoint_payload["last_response_preview"] = summary
+    checkpoint_payload = {
+        "conversation_history": result.get("messages", []),
+        "turn_exit_reason": str(result.get("turn_exit_reason", "") or ""),
+        "api_calls": int(result.get("api_calls", 0) or 0),
+        "last_response_preview": summary,
+    }
+    turn_exit_reason = checkpoint_payload["turn_exit_reason"]
+    if turn_exit_reason.startswith("max_iterations_reached"):
+        return HermesStepResult(
+            outcome_type=HermesStepOutcome.CHECKPOINT,
+            assistant_text=response,
+            progress_summary=summary or "checkpoint saved",
+            checkpoint_payload=checkpoint_payload,
+            waiting_reason="",
+            next_action_hint="continue",
+        )
+    if result.get("failed"):
+        return HermesStepResult(
+            outcome_type=HermesStepOutcome.RETRYABLE_ERROR,
+            assistant_text=response or "agent step failed",
+            progress_summary=summary or "agent step failed",
+            checkpoint_payload=checkpoint_payload,
+            waiting_reason="",
+            next_action_hint="retry",
+        )
     return HermesStepResult(
         outcome_type=HermesStepOutcome.COMPLETED,
         assistant_text=response,
